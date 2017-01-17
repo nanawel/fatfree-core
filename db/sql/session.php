@@ -2,7 +2,7 @@
 
 /*
 
-	Copyright (c) 2009-2015 F3::Factory/Bong Cosca, All rights reserved.
+	Copyright (c) 2009-2017 F3::Factory/Bong Cosca, All rights reserved.
 
 	This file is part of the Fat-Free Framework (http://fatfreeframework.com).
 
@@ -59,13 +59,13 @@ class Session extends Mapper {
 
 	/**
 	*	Return session data in serialized format
-	*	@return string|FALSE
+	*	@return string
 	*	@param $id string
 	**/
 	function read($id) {
 		$this->load(['session_id=?',$this->sid=$id]);
 		if ($this->dry())
-			return FALSE;
+			return '';
 		if ($this->get('ip')!=$this->_ip || $this->get('agent')!=$this->_agent) {
 			$fw=\Base::instance();
 			if (!isset($this->onsuspect) ||
@@ -177,12 +177,12 @@ class Session extends Mapper {
 						'CREATE TABLE dbo.'):
 					('CREATE TABLE IF NOT EXISTS '.
 						((($name=$db->name())&&$db->driver()!='pgsql')?
-							($name.'.'):''))).
-				$table.' ('.$eol.
-					$tab.$db->quotekey('session_id').' VARCHAR(40),'.$eol.
+							($db->quotekey($name,FALSE).'.'):''))).
+				$db->quotekey($table,FALSE).' ('.$eol.
+					$tab.$db->quotekey('session_id').' VARCHAR(255),'.$eol.
 					$tab.$db->quotekey('data').' TEXT,'.$eol.
-					$tab.$db->quotekey('ip').' VARCHAR(40),'.$eol.
-					$tab.$db->quotekey('agent').' VARCHAR(255),'.$eol.
+					$tab.$db->quotekey('ip').' VARCHAR(45),'.$eol.
+					$tab.$db->quotekey('agent').' VARCHAR(300),'.$eol.
 					$tab.$db->quotekey('stamp').' INTEGER,'.$eol.
 					$tab.'PRIMARY KEY ('.$db->quotekey('session_id').')'.$eol.
 				');'
@@ -201,8 +201,7 @@ class Session extends Mapper {
 		register_shutdown_function('session_commit');
 		$fw=\Base::instance();
 		$headers=$fw->get('HEADERS');
-		$this->_csrf=$fw->hash($fw->get('ROOT').$fw->get('BASE')).'.'.
-			$fw->hash(mt_rand());
+		$this->_csrf=$fw->get('SEED').'.'.$fw->hash(mt_rand());
 		if ($key)
 			$fw->set($key,$this->_csrf);
 		$this->_agent=isset($headers['User-Agent'])?$headers['User-Agent']:'';

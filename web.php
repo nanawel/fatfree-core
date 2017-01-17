@@ -2,7 +2,7 @@
 
 /*
 
-	Copyright (c) 2009-2015 F3::Factory/Bong Cosca, All rights reserved.
+	Copyright (c) 2009-2017 F3::Factory/Bong Cosca, All rights reserved.
 
 	This file is part of the Fat-Free Framework (http://fatfreeframework.com).
 
@@ -125,7 +125,7 @@ class Web extends Prefab {
 	*	@param $kbps int
 	*	@param $force bool
 	*	@param $name string
-	*	@param $flush bool 
+	*	@param $flush bool
 	**/
 	function send($file,$mime=NULL,$kbps=0,$force=TRUE,$name=NULL,$flush=TRUE) {
 		if (!is_file($file))
@@ -176,9 +176,7 @@ class Web extends Prefab {
 		if (!is_dir($dir))
 			mkdir($dir,Base::MODE,TRUE);
 		if ($fw->get('VERB')=='PUT') {
-			$tmp=$fw->get('TEMP').
-				$fw->hash($fw->get('ROOT').$fw->get('BASE')).'.'.
-				$fw->hash(uniqid());
+			$tmp=$fw->get('TEMP').$fw->get('SEED').'.'.$fw->hash(uniqid());
 			if (!$fw->get('RAW'))
 				$fw->write($tmp,$fw->get('BODY'));
 			else {
@@ -210,7 +208,7 @@ class Web extends Prefab {
 				(!$func || $fw->call($func,[$file])!==FALSE) &&
 				rename($tmp,$file['name']);
 		}
-		$fetch=function($arr)use(&$fetch){
+		$fetch=function($arr) use(&$fetch) {
 			if (!is_array($arr))
 				return [$arr];
 			$data=[];
@@ -221,8 +219,8 @@ class Web extends Prefab {
 		$out=[];
 		foreach ($_FILES as $name=>$item) {
 			$files=[];
-			foreach($item as $k=>$mix)
-				foreach($fetch($mix) as $i=>$val)
+			foreach ($item as $k=>$mix)
+				foreach ($fetch($mix) as $i=>$val)
 					$files[$i][$k]=$val;
 			foreach ($files as $file) {
 				if (empty($file['name']))
@@ -291,21 +289,31 @@ class Web extends Prefab {
 				return strlen($line);
 			}
 		);
+		curl_setopt($curl,CURLOPT_SSL_VERIFYHOST,2);
 		curl_setopt($curl,CURLOPT_SSL_VERIFYPEER,FALSE);
 		ob_start();
 		curl_exec($curl);
+		$err=curl_error($curl);
 		curl_close($curl);
 		$body=ob_get_clean();
-		if ($options['follow_location'] &&
+		if (!$err &&
+			$options['follow_location'] &&
 			preg_match('/^Location: (.+)$/m',implode(PHP_EOL,$headers),$loc)) {
 			$options['max_redirects']--;
+			if($loc[1][0] == '/') {
+				$parts=parse_url($url);
+				$loc[1]=$parts['scheme'].'://'.$parts['host'].
+					((isset($parts['port']) && !in_array($parts['port'],[80,443]))
+						?':'.$parts['port']:'').$loc[1];
+			}
 			return $this->request($loc[1],$options);
 		}
 		return [
 			'body'=>$body,
 			'headers'=>$headers,
 			'engine'=>'cURL',
-			'cached'=>FALSE
+			'cached'=>FALSE,
+			'error'=>$err
 		];
 	}
 
@@ -322,24 +330,32 @@ class Web extends Prefab {
 			stream_context_create(['http'=>$options]));
 		$headers=isset($http_response_header)?
 			$http_response_header:[];
-		$match=NULL;
-		foreach ($headers as $header)
-			if (preg_match('/Content-Encoding: (.+)/',$header,$match))
-				break;
-		if ($match)
-			switch ($match[1]) {
-				case 'gzip':
-					$body=gzdecode($body);
+		$err='';
+		if (is_string($body)) {
+			$match=NULL;
+			foreach ($headers as $header)
+				if (preg_match('/Content-Encoding: (.+)/',$header,$match))
 					break;
-				case 'deflate':
-					$body=gzuncompress($body);
-					break;
-			}
+			if ($match)
+				switch ($match[1]) {
+					case 'gzip':
+						$body=gzdecode($body);
+						break;
+					case 'deflate':
+						$body=gzuncompress($body);
+						break;
+				}
+		}
+		else {
+			$tmp=error_get_last();
+			$err=$tmp['message'];
+		}
 		return [
 			'body'=>$body,
 			'headers'=>$headers,
 			'engine'=>'stream',
-			'cached'=>FALSE
+			'cached'=>FALSE,
+			'error'=>$err
 		];
 	}
 
@@ -366,53 +382,53 @@ class Web extends Prefab {
 			$parts['path']='/';
 		if (empty($parts['query']))
 			$parts['query']='';
-		$socket=@fsockopen($parts['host'],$parts['port']);
-		if (!$socket)
-			return FALSE;
-		stream_set_blocking($socket,TRUE);
-		stream_set_timeout($socket,isset($options['timeout'])?
-			$options['timeout']:ini_get('default_socket_timeout'));
-		fputs($socket,$options['method'].' '.$parts['path'].
-			($parts['query']?('?'.$parts['query']):'').' HTTP/1.0'.$eol
-		);
-		fputs($socket,implode($eol,$options['header']).$eol.$eol);
-		if (isset($options['content']))
-			fputs($socket,$options['content'].$eol);
-		// Get response
-		$content='';
-		while (!feof($socket) &&
-			($info=stream_get_meta_data($socket)) &&
-			!$info['timed_out'] && !connection_aborted() &&
-			$str=fgets($socket,4096))
-			$content.=$str;
-		fclose($socket);
-		$html=explode($eol.$eol,$content,2);
-		$body=isset($html[1])?$html[1]:'';
-		$headers=array_merge($headers,$current=explode($eol,$html[0]));
-		$match=NULL;
-		foreach ($current as $header)
-			if (preg_match('/Content-Encoding: (.+)/',$header,$match))
-				break;
-		if ($match)
-			switch ($match[1]) {
-				case 'gzip':
-					$body=gzdecode($body);
+		if ($socket=@fsockopen($parts['host'],$parts['port'],$code,$err)) {
+			stream_set_blocking($socket,TRUE);
+			stream_set_timeout($socket,isset($options['timeout'])?
+				$options['timeout']:ini_get('default_socket_timeout'));
+			fputs($socket,$options['method'].' '.$parts['path'].
+				($parts['query']?('?'.$parts['query']):'').' HTTP/1.0'.$eol
+			);
+			fputs($socket,implode($eol,$options['header']).$eol.$eol);
+			if (isset($options['content']))
+				fputs($socket,$options['content'].$eol);
+			// Get response
+			$content='';
+			while (!feof($socket) &&
+				($info=stream_get_meta_data($socket)) &&
+				!$info['timed_out'] && !connection_aborted() &&
+				$str=fgets($socket,4096))
+				$content.=$str;
+			fclose($socket);
+			$html=explode($eol.$eol,$content,2);
+			$body=isset($html[1])?$html[1]:'';
+			$headers=array_merge($headers,$current=explode($eol,$html[0]));
+			$match=NULL;
+			foreach ($current as $header)
+				if (preg_match('/Content-Encoding: (.+)/',$header,$match))
 					break;
-				case 'deflate':
-					$body=gzuncompress($body);
-					break;
+			if ($match)
+				switch ($match[1]) {
+					case 'gzip':
+						$body=gzdecode($body);
+						break;
+					case 'deflate':
+						$body=gzuncompress($body);
+						break;
+				}
+			if ($options['follow_location'] &&
+				preg_match('/Location: (.+?)'.preg_quote($eol).'/',
+				$html[0],$loc)) {
+				$options['max_redirects']--;
+				return $this->request($loc[1],$options);
 			}
-		if ($options['follow_location'] &&
-			preg_match('/Location: (.+?)'.preg_quote($eol).'/',
-			$html[0],$loc)) {
-			$options['max_redirects']--;
-			return $this->request($loc[1],$options);
 		}
 		return [
 			'body'=>$body,
 			'headers'=>$headers,
 			'engine'=>'socket',
-			'cached'=>FALSE
+			'cached'=>FALSE,
+			'error'=>$err
 		];
 	}
 
@@ -434,7 +450,7 @@ class Web extends Prefab {
 		foreach ($flags as $key=>$val)
 			if ($val)
 				return $this->wrapper=$key;
-		user_error(E_Request,E_USER_ERROR);
+		user_error(self::E_Request,E_USER_ERROR);
 	}
 
 	/**
@@ -543,7 +559,10 @@ class Web extends Prefab {
 				preg_quote($eol).')/',implode($eol,$result['headers']),$exp))
 				$cache->set($hash,$result,$exp[1]);
 		}
-		return $result;
+		$req=[$options['method'].' '.$url];
+		foreach ($options['header'] as $header)
+			array_push($req,$header);
+		return array_merge(['request'=>$req],$result);
 	}
 
 	/**
@@ -857,8 +876,7 @@ if (!function_exists('gzdecode')) {
 		$fw=Base::instance();
 		if (!is_dir($tmp=$fw->get('TEMP')))
 			mkdir($tmp,Base::MODE,TRUE);
-		file_put_contents($file=$tmp.'/'.
-			$fw->hash($fw->get('ROOT').$fw->get('BASE')).'.'.
+		file_put_contents($file=$tmp.'/'.$fw->get('SEED').'.'.
 			$fw->hash(uniqid(NULL,TRUE)).'.gz',$str,LOCK_EX);
 		ob_start();
 		readgzfile($file);

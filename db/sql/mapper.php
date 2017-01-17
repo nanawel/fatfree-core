@@ -2,7 +2,7 @@
 
 /*
 
-	Copyright (c) 2009-2015 F3::Factory/Bong Cosca, All rights reserved.
+	Copyright (c) 2009-2017 F3::Factory/Bong Cosca, All rights reserved.
 
 	This file is part of the Fat-Free Framework (http://fatfreeframework.com).
 
@@ -90,7 +90,7 @@ class Mapper extends \DB\Cursor {
 		if (array_key_exists($key,$this->fields)) {
 			$val=is_null($val) && $this->fields[$key]['nullable']?
 				NULL:$this->db->value($this->fields[$key]['pdo_type'],$val);
-			if ($this->fields[$key]['value']!==$val ||
+			if ($this->fields[$key]['initial']!==$val ||
 				$this->fields[$key]['default']!==$val && is_null($val))
 				$this->fields[$key]['changed']=TRUE;
 			return $this->fields[$key]['value']=$val;
@@ -144,6 +144,8 @@ class Mapper extends \DB\Cursor {
 				return 'bool';
 			case \PDO::PARAM_STR:
 				return 'string';
+			case \DB\SQL::PARAM_FLOAT:
+				return 'float';
 		}
 	}
 
@@ -163,6 +165,7 @@ class Mapper extends \DB\Cursor {
 			else
 				continue;
 			$mapper->{$var}[$key]['value']=$val;
+			$mapper->{$var}[$key]['initial']=$val;
 			if ($var=='fields' && $mapper->{$var}[$key]['pkey'])
 				$mapper->{$var}[$key]['previous']=$val;
 		}
@@ -194,7 +197,7 @@ class Mapper extends \DB\Cursor {
 	*	@param $fields string
 	*	@param $filter string|array
 	*	@param $options array
-	*	@param $ttl int
+	*	@param $ttl int|array
 	**/
 	function select($fields,$filter=NULL,array $options=NULL,$ttl=0) {
 		if (!$options)
@@ -223,7 +226,7 @@ class Mapper extends \DB\Cursor {
 					return preg_replace_callback(
 						'/\b(\w+)\h*(HAVING.+|$)/i',
 						function($parts) use($db) {
-							return $db->quotekey($parts[1]);
+							return $db->quotekey($parts[1]).(isset($parts[2])?(' '.$parts[2]):'');
 						},
 						$str
 					);
@@ -296,7 +299,7 @@ class Mapper extends \DB\Cursor {
 	*	@return static[]
 	*	@param $filter string|array
 	*	@param $options array
-	*	@param $ttl int
+	*	@param $ttl int|array
 	**/
 	function find($filter=NULL,array $options=NULL,$ttl=0) {
 		if (!$options)
@@ -321,7 +324,7 @@ class Mapper extends \DB\Cursor {
 	*	Count records that match criteria
 	*	@return int
 	*	@param $filter string|array
-	*	@param $ttl int
+	*	@param $ttl int|array
 	**/
 	function count($filter=NULL,$ttl=0) {
 		$sql='SELECT COUNT(*) AS '.
@@ -352,6 +355,7 @@ class Mapper extends \DB\Cursor {
 		$dry=$this->dry();
 		foreach ($this->fields as $key=>&$field) {
 			$field['value']=$dry?NULL:$out->fields[$key]['value'];
+			$field['initial']=$field['value'];
 			$field['changed']=FALSE;
 			if ($field['pkey'])
 				$field['previous']=$dry?NULL:$out->fields[$key]['value'];
@@ -419,9 +423,11 @@ class Mapper extends \DB\Cursor {
 			$seq=NULL;
 			if ($this->engine=='pgsql') {
 				$names=array_keys($pkeys);
-				$seq=$this->source.'_'.end($names).'_seq';
+				$aik=end($names);
+				if ($this->fields[$aik]['pdo_type']==\PDO::PARAM_INT)
+					$seq=$this->source.'_'.$aik.'_seq';
 			}
-			if ($this->engine!='oci')
+			if ($this->engine!='oci' && !($this->engine=='pgsql' && !$seq))
 				$this->_id=$this->db->lastinsertid($seq);
 			// Reload to obtain default and auto-increment field values
 			if ($inc || $filter)
@@ -456,15 +462,13 @@ class Mapper extends \DB\Cursor {
 		foreach ($this->fields as $key=>$field)
 			if ($field['changed']) {
 				$pairs.=($pairs?',':'').$this->db->quotekey($key).'=?';
-				$args[$ctr+1]=[$field['value'],$field['pdo_type']];
-				$ctr++;
+				$args[++$ctr]=[$field['value'],$field['pdo_type']];
 			}
 		foreach ($this->fields as $key=>$field)
 			if ($field['pkey']) {
 				$filter.=($filter?' AND ':' WHERE ').
 					$this->db->quotekey($key).'=?';
-				$args[$ctr+1]=[$field['previous'],$field['pdo_type']];
-				$ctr++;
+				$args[++$ctr]=[$field['previous'],$field['pdo_type']];
 			}
 		if ($pairs) {
 			$sql='UPDATE '.$this->table.' SET '.$pairs.$filter;
@@ -473,6 +477,12 @@ class Mapper extends \DB\Cursor {
 				\Base::instance()->call($this->trigger['afterupdate'],
 					[$this,$pkeys]);
 		}
+		// reset changed flag after calling afterupdate
+		foreach ($this->fields as $key=>&$field) {
+				$field['changed']=FALSE;
+				$field['initial']=$field['value'];
+				unset($field);
+			}
 		return $this;
 	}
 
@@ -482,7 +492,7 @@ class Mapper extends \DB\Cursor {
 	*	@param $filter string|array
 	**/
 	function erase($filter=NULL) {
-		if ($filter) {
+		if (isset($filter)) {
 			$args=[];
 			if (is_array($filter)) {
 				$args=isset($filter[1]) && is_array($filter[1])?
@@ -492,7 +502,7 @@ class Mapper extends \DB\Cursor {
 				list($filter)=$filter;
 			}
 			return $this->db->
-				exec('DELETE FROM '.$this->table.' WHERE '.$filter.';',$args);
+				exec('DELETE FROM '.$this->table.($filter?' WHERE '.$filter:'').';',$args);
 		}
 		$args=[];
 		$ctr=0;
@@ -535,6 +545,7 @@ class Mapper extends \DB\Cursor {
 	function reset() {
 		foreach ($this->fields as &$field) {
 			$field['value']=NULL;
+			$field['initial']=NULL;
 			$field['changed']=FALSE;
 			if ($field['pkey'])
 				$field['previous']=NULL;
@@ -617,7 +628,7 @@ class Mapper extends \DB\Cursor {
 	*	@param $db object
 	*	@param $table string
 	*	@param $fields array|string
-	*	@param $ttl int
+	*	@param $ttl int|array
 	**/
 	function __construct(\DB\SQL $db,$table,$fields=NULL,$ttl=60) {
 		$this->db=$db;

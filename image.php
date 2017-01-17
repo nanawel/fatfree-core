@@ -2,7 +2,7 @@
 
 /*
 
-	Copyright (c) 2009-2015 F3::Factory/Bong Cosca, All rights reserved.
+	Copyright (c) 2009-2017 F3::Factory/Bong Cosca, All rights reserved.
 
 	This file is part of the Fat-Free Framework (http://fatfreeframework.com).
 
@@ -228,9 +228,17 @@ class Image {
 	*	@param $crop bool
 	*	@param $enlarge bool
 	**/
-	function resize($width,$height,$crop=TRUE,$enlarge=TRUE) {
+	function resize($width=NULL,$height=NULL,$crop=TRUE,$enlarge=TRUE) {
+		if (is_null($width) && is_null($height))
+			return $this;
+		$origw=$this->width();
+		$origh=$this->height();
+		if (is_null($width))
+			$width=round(($height/$origh)*$origw);
+		if (is_null($height))
+			$height=round(($width/$origw)*$origh);
 		// Adjust dimensions; retain aspect ratio
-		$ratio=($origw=imagesx($this->data))/($origh=imagesy($this->data));
+		$ratio=$origw/$origh;
 		if (!$crop) {
 			if ($width/$ratio<=$height)
 				$height=round($width/$ratio);
@@ -363,15 +371,10 @@ class Image {
 			for ($i=$j,$x=$blocks-1-$j;$i<$x;$i++) {
 				$sprite=imagecreatetruecolor($dim,$dim);
 				imagefill($sprite,0,0,IMG_COLOR_TRANSPARENT);
-				if ($block=$sprites[
-					hexdec($hash[($j*$blocks+$i)*2])%$ctr]) {
-					for ($k=0,$pts=count($block);$k<$pts;$k++)
-						$block[$k]*=$dim;
-					imagefilledpolygon($sprite,$block,$pts/2,$fg);
-				}
-				$sprite=imagerotate($sprite,
-					90*(hexdec($hash[($j*$blocks+$i)*2+1])%4),
-					imagecolorallocatealpha($sprite,0,0,0,127));
+				$block=$sprites[hexdec($hash[($j*$blocks+$i)*2])%$ctr];
+				for ($k=0,$pts=count($block);$k<$pts;$k++)
+					$block[$k]*=$dim;
+				imagefilledpolygon($sprite,$block,$pts/2,$fg);
 				for ($k=0;$k<4;$k++) {
 					imagecopyresampled($this->data,$sprite,
 						$i*$dim/2,$j*$dim/2,0,0,$dim/2,$dim/2,$dim,$dim);
@@ -479,7 +482,10 @@ class Image {
 			header('Content-Type: image/'.$format);
 			header('X-Powered-By: '.Base::instance()->get('PACKAGE'));
 		}
-		call_user_func_array('image'.$format,array_merge([$this->data],$args));
+		call_user_func_array(
+			'image'.$format,
+			array_merge([$this->data,NULL],$args)
+		);
 	}
 
 	/**
@@ -490,7 +496,10 @@ class Image {
 		$args=func_get_args();
 		$format=$args?array_shift($args):'png';
 		ob_start();
-		call_user_func_array('image'.$format,array_merge([$this->data],$args));
+		call_user_func_array(
+			'image'.$format,
+			array_merge([$this->data,NULL],$args)
+		);
 		return ob_get_clean();
 	}
 
@@ -512,8 +521,7 @@ class Image {
 			if (!is_dir($dir=$fw->get('TEMP')))
 				mkdir($dir,Base::MODE,TRUE);
 			$this->count++;
-			$fw->write($dir.'/'.
-				$fw->hash($fw->get('ROOT').$fw->get('BASE')).'.'.
+			$fw->write($dir.'/'.$fw->get('SEED').'.'.
 				$fw->hash($this->file).'-'.$this->count.'.png',
 				$this->dump());
 		}
@@ -528,8 +536,7 @@ class Image {
 	function restore($state=1) {
 		$fw=Base::instance();
 		if ($this->flag && is_file($file=($path=$fw->get('TEMP').
-			$fw->hash($fw->get('ROOT').$fw->get('BASE')).'.'.
-			$fw->hash($this->file).'-').$state.'.png')) {
+			$fw->get('SEED').'.'.$fw->hash($this->file).'-').$state.'.png')) {
 			if (is_resource($this->data))
 				imagedestroy($this->data);
 			$this->data=imagecreatefromstring($fw->read($file));
@@ -558,11 +565,12 @@ class Image {
 
 	/**
 	*	Load string
-	*	@return object
+	*	@return object|FALSE
 	*	@param $str string
 	**/
 	function load($str) {
-		$this->data=imagecreatefromstring($str);
+		if (!$this->data=@imagecreatefromstring($str))
+			return FALSE;
 		imagesavealpha($this->data,TRUE);
 		$this->save();
 		return $this;
@@ -597,9 +605,7 @@ class Image {
 		if (is_resource($this->data)) {
 			imagedestroy($this->data);
 			$fw=Base::instance();
-			$path=$fw->get('TEMP').
-				$fw->hash($fw->get('ROOT').$fw->get('BASE')).'.'.
-				$fw->hash($this->file);
+			$path=$fw->get('TEMP').$fw->get('SEED').'.'.$fw->hash($this->file);
 			if ($glob=@glob($path.'*.png',GLOB_NOSORT))
 				foreach ($glob as $match)
 					if (preg_match('/-(\d+)\.png/',$match))

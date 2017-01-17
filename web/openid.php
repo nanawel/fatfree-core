@@ -2,7 +2,7 @@
 
 /*
 
-	Copyright (c) 2009-2015 F3::Factory/Bong Cosca, All rights reserved.
+	Copyright (c) 2009-2017 F3::Factory/Bong Cosca, All rights reserved.
 
 	This file is part of the Fat-Free Framework (http://fatfreeframework.com).
 
@@ -38,11 +38,11 @@ class OpenID extends \Magic {
 	**/
 	protected function discover($proxy) {
 		// Normalize
-		if (!preg_match('/https?:\/\//i',$this->args['identity']))
-			$this->args['identity']='http://'.$this->args['identity'];
-		$url=parse_url($this->args['identity']);
+		if (!preg_match('/https?:\/\//i',$this->args['endpoint']))
+			$this->args['endpoint']='http://'.$this->args['endpoint'];
+		$url=parse_url($this->args['endpoint']);
 		// Remove fragment; reconnect parts
-		$this->args['identity']=$url['scheme'].'://'.
+		$this->args['endpoint']=$url['scheme'].'://'.
 			(isset($url['user'])?
 				($url['user'].
 				(isset($url['pass'])?(':'.$url['pass']):'').'@'):'').
@@ -50,7 +50,7 @@ class OpenID extends \Magic {
 			(isset($url['query'])?('?'.$url['query']):'');
 		// HTML-based discovery of OpenID provider
 		$req=\Web::instance()->
-			request($this->args['identity'],['proxy'=>$proxy]);
+			request($this->args['endpoint'],['proxy'=>$proxy]);
 		if (!$req)
 			return FALSE;
 		$type=array_values(preg_grep('/Content-Type:/',$req['headers']));
@@ -63,8 +63,9 @@ class OpenID extends \Magic {
 			$svc=$xrds['XRD']['Service'];
 			if (isset($svc[0]))
 				$svc=$svc[0];
+			$svc_type=is_array($svc['Type'])?$svc['Type']:array($svc['Type']);
 			if (preg_grep('/http:\/\/specs\.openid\.net\/auth\/2.0\/'.
-					'(?:server|signon)/',$svc['Type'])) {
+					'(?:server|signon)/',$svc_type)) {
 				$this->args['provider']=$svc['URI'];
 				if (isset($svc['LocalID']))
 					$this->args['localidentity']=$svc['LocalID'];
@@ -245,4 +246,3 @@ class OpenID extends \Magic {
 	}
 
 }
-

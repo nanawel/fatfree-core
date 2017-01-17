@@ -2,7 +2,7 @@
 
 /*
 
-	Copyright (c) 2009-2015 F3::Factory/Bong Cosca, All rights reserved.
+	Copyright (c) 2009-2017 F3::Factory/Bong Cosca, All rights reserved.
 
 	This file is part of the Fat-Free Framework (http://fatfreeframework.com).
 
@@ -229,7 +229,8 @@ class Basket extends Magic {
 	**/
 	function __construct($key='basket') {
 		$this->key=$key;
-		@session_start();
+		if (session_status()!=PHP_SESSION_ACTIVE)
+			session_start();
 		Base::instance()->sync('SESSION');
 		$this->reset();
 	}
