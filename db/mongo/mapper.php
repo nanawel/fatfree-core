@@ -212,9 +212,10 @@ class Mapper extends \DB\Cursor {
 	*	Count records that match criteria
 	*	@return int
 	*	@param $filter array
+	*	@param $options array
 	*	@param $ttl int
 	**/
-	function count($filter=NULL,$ttl=0) {
+	function count($filter=NULL,array $options=NULL,$ttl=0) {
 		$fw=\Base::instance();
 		$cache=\Cache::instance();
 		if (!($cached=$cache->exists($hash=$fw->hash($fw->stringify(
@@ -291,10 +292,17 @@ class Mapper extends \DB\Cursor {
 	/**
 	*	Delete current record
 	*	@return bool
+	*	@param $quick bool
 	*	@param $filter array
 	**/
-	function erase($filter=NULL) {
+	function erase($filter=NULL,$quick=TRUE) {
 		if ($filter) {
+			if (!$quick) {
+				foreach ($this->find($filter) as $mapper)
+					if (!$mapper->erase())
+						return FALSE;
+				return TRUE;
+			}
 			return $this->legacy?
 				$this->collection->remove($filter):
 				$this->collection->deletemany($filter);

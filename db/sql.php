@@ -113,16 +113,16 @@ class SQL {
 
 	/**
 	*	Cast value to PHP type
-	*	@return scalar
+	*	@return mixed
 	*	@param $type string
-	*	@param $val scalar
+	*	@param $val mixed
 	**/
 	function value($type,$val) {
 		switch ($type) {
 			case self::PARAM_FLOAT:
-				return (float)(is_string($val)
-					? str_replace(',','.',preg_replace('/([.,])(?!\d+$)/','',$val))
-					: $val);
+				if (!is_string($val))
+					$val=str_replace(',','.',$val);
+				return $val;
 			case \PDO::PARAM_NULL:
 				return (unset)$val;
 			case \PDO::PARAM_INT:

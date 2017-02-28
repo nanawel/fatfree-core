@@ -226,7 +226,8 @@ class Mapper extends \DB\Cursor {
 					return preg_replace_callback(
 						'/\b(\w+)\h*(HAVING.+|$)/i',
 						function($parts) use($db) {
-							return $db->quotekey($parts[1]).(isset($parts[2])?(' '.$parts[2]):'');
+							return $db->quotekey($parts[1]).
+								(isset($parts[2])?(' '.$parts[2]):'');
 						},
 						$str
 					);
@@ -324,24 +325,18 @@ class Mapper extends \DB\Cursor {
 	*	Count records that match criteria
 	*	@return int
 	*	@param $filter string|array
+	*	@param $options array
 	*	@param $ttl int|array
 	**/
-	function count($filter=NULL,$ttl=0) {
-		$sql='SELECT COUNT(*) AS '.
-			$this->db->quotekey('rows').' FROM '.$this->table;
-		$args=[];
-		if ($filter) {
-			if (is_array($filter)) {
-				$args=isset($filter[1]) && is_array($filter[1])?
-					$filter[1]:
-					array_slice($filter,1,NULL,TRUE);
-				$args=is_array($args)?$args:[1=>$args];
-				list($filter)=$filter;
-			}
-			$sql.=' WHERE '.$filter;
-		}
-		$result=$this->db->exec($sql,$args,$ttl);
-		return $result[0]['rows'];
+	function count($filter=NULL,array $options=NULL,$ttl=0) {
+		$expr='COUNT(*)';
+		$field='rows';
+		$this->adhoc[$field]=['expr'=>$expr,'value'=>NULL];
+		$result=$this->select($expr.' AS '.$this->db->quotekey($field),
+			$filter,$options,$ttl);
+		$out=$result[0]->adhoc[$field]['value'];
+		unset($this->adhoc[$field]);
+		return $out;
 	}
 
 	/**
@@ -409,8 +404,6 @@ class Mapper extends \DB\Cursor {
 				$actr++;
 				$ckeys[]=$key;
 			}
-			$field['changed']=FALSE;
-			unset($field);
 		}
 		if ($fields) {
 			$this->db->exec(
@@ -430,7 +423,7 @@ class Mapper extends \DB\Cursor {
 			if ($this->engine!='oci' && !($this->engine=='pgsql' && !$seq))
 				$this->_id=$this->db->lastinsertid($seq);
 			// Reload to obtain default and auto-increment field values
-			if ($inc || $filter)
+			if ($reload=($inc || $filter))
 				$this->load($inc?
 					[$inc.'=?',$this->db->value(
 						$this->fields[$inc]['pdo_type'],$this->_id)]:
@@ -438,6 +431,13 @@ class Mapper extends \DB\Cursor {
 			if (isset($this->trigger['afterinsert']))
 				\Base::instance()->call($this->trigger['afterinsert'],
 					[$this,$pkeys]);
+			// reset changed flag after calling afterinsert
+			if (!$reload)
+				foreach ($this->fields as $key=>&$field) {
+					$field['changed']=FALSE;
+					$field['initial']=$field['value'];
+					unset($field);
+				}
 		}
 		return $this;
 	}
@@ -473,10 +473,10 @@ class Mapper extends \DB\Cursor {
 		if ($pairs) {
 			$sql='UPDATE '.$this->table.' SET '.$pairs.$filter;
 			$this->db->exec($sql,$args);
-			if (isset($this->trigger['afterupdate']))
-				\Base::instance()->call($this->trigger['afterupdate'],
-					[$this,$pkeys]);
 		}
+		if (isset($this->trigger['afterupdate']))
+			\Base::instance()->call($this->trigger['afterupdate'],
+				[$this,$pkeys]);
 		// reset changed flag after calling afterupdate
 		foreach ($this->fields as $key=>&$field) {
 				$field['changed']=FALSE;
@@ -489,10 +489,17 @@ class Mapper extends \DB\Cursor {
 	/**
 	*	Delete current record
 	*	@return int
+	*	@param $quick bool
 	*	@param $filter string|array
 	**/
-	function erase($filter=NULL) {
+	function erase($filter=NULL,$quick=TRUE) {
 		if (isset($filter)) {
+			if (!$quick) {
+				$out=0;
+				foreach ($this->find($filter) as $mapper)
+					$out+=$mapper->erase();
+				return $out;
+			}
 			$args=[];
 			if (is_array($filter)) {
 				$args=isset($filter[1]) && is_array($filter[1])?
